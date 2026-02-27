@@ -385,13 +385,17 @@ func (r *OpenAIRouter) parseStreamingChunk(chunk string, ctx *RequestContext) {
 				}
 			}
 
-			// Extract content from delta
+			// Extract content from delta (chat format) or text (completions format)
 			if choices, ok := chunkData["choices"].([]interface{}); ok && len(choices) > 0 {
 				if choice, ok := choices[0].(map[string]interface{}); ok {
+					// Try chat format first (delta.content)
 					if delta, ok := choice["delta"].(map[string]interface{}); ok {
 						if content, ok := delta["content"].(string); ok && content != "" {
 							ctx.StreamingContent += content
 						}
+					} else if text, ok := choice["text"].(string); ok && text != "" {
+						// Completions format (text field directly in choice)
+						ctx.StreamingContent += text
 					}
 					// Extract finish_reason if present
 					if finishReason, ok := choice["finish_reason"].(string); ok && finishReason != "" {

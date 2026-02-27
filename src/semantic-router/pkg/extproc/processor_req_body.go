@@ -56,6 +56,19 @@ func (r *OpenAIRouter) handleRequestBody(v *ext_proc.ProcessingRequest_RequestBo
 		}
 	}
 
+	// Handle Completions API translation if this is a /v1/completions request
+	if ctx.CompletionsAPICtx != nil && ctx.CompletionsAPICtx.IsCompletionsRequest {
+		compCtx, translatedBody, err := TranslateCompletionsRequest(requestBody)
+		if err != nil {
+			logging.Errorf("Completions API translation error: %v", err)
+			return r.createErrorResponse(400, "Invalid Completions API request: "+err.Error()), nil
+		}
+		// Update context with full Completions API context
+		ctx.CompletionsAPICtx = compCtx
+		requestBody = translatedBody
+		logging.Infof("Completions API: Translated to Chat Completions format")
+	}
+
 	// Extract stream parameter from original request and update ExpectStreamingResponse if needed
 	hasStreamParam := extractStreamParam(requestBody)
 	if hasStreamParam {
@@ -386,6 +399,17 @@ func (r *OpenAIRouter) handleAutoModelRouting(openAIRequest *openai.ChatCompleti
 		return nil, err
 	}
 
+	// Convert back to completions format if this was a /v1/completions request
+	if ctx.CompletionsAPICtx != nil && ctx.CompletionsAPICtx.IsCompletionsRequest {
+		completionsBody, convertErr := convertChatToCompletionsFormat(modifiedBody, ctx.CompletionsAPICtx.OriginalRequestBody)
+		if convertErr != nil {
+			logging.Errorf("Failed to convert back to completions format: %v", convertErr)
+			return nil, convertErr
+		}
+		modifiedBody = completionsBody
+		logging.Infof("Completions API: Converted chat format back to /v1/completions format with model: %s", upstreamModel)
+	}
+
 	// Create response with mutations (use original alias for headers/tracing, upstream model in body)
 	response = r.createRoutingResponse(matchedModel, selectedEndpoint, selectedEndpointName, modifiedBody, ctx)
 
@@ -691,6 +715,14 @@ func (r *OpenAIRouter) createRoutingResponse(model string, endpoint string, endp
 			},
 		})
 		logging.Infof("Response API: Rewriting path to /v1/chat/completions")
+	} else if ctx.CompletionsAPICtx != nil && ctx.CompletionsAPICtx.IsCompletionsRequest {
+		setHeaders = append(setHeaders, &core.HeaderValueOption{
+			Header: &core.HeaderValue{
+				Key:      ":path",
+				RawValue: []byte("/v1/completions"),
+			},
+		})
+		logging.Infof("Completions API: Rewriting path back to /v1/completions for vLLM")
 	} else if profile != nil {
 		chatPath, pathErr := profile.ResolveChatPath()
 		if pathErr != nil {
@@ -831,6 +863,15 @@ func (r *OpenAIRouter) createSpecifiedModelResponse(model string, upstreamModel 
 		})
 		needsBodyMutation = true
 		logging.Infof("Response API: Rewriting path to /v1/chat/completions (specified model)")
+	} else if ctx != nil && ctx.CompletionsAPICtx != nil && ctx.CompletionsAPICtx.IsCompletionsRequest {
+		setHeaders = append(setHeaders, &core.HeaderValueOption{
+			Header: &core.HeaderValue{
+				Key:      ":path",
+				RawValue: []byte("/v1/completions"),
+			},
+		})
+		needsBodyMutation = true
+		logging.Infof("Completions API: Rewriting path back to /v1/completions for vLLM (specified model)")
 	} else if profile != nil {
 		chatPath, pathErr := profile.ResolveChatPath()
 		if pathErr != nil {

@@ -121,6 +121,9 @@ type RequestContext struct {
 	// Response API context
 	ResponseAPICtx *ResponseAPIContext // Non-nil if this is a Response API request
 
+	// Completions API context
+	CompletionsAPICtx *CompletionsAPIContext // Non-nil if this is a /v1/completions request
+
 	// Router replay context
 	RouterReplayID           string                           // ID of the router replay session, if applicable
 	RouterReplayPluginConfig *config.RouterReplayPluginConfig // Per-decision plugin configuration for router replay
@@ -266,6 +269,12 @@ func (r *OpenAIRouter) handleRequestHeaders(v *ext_proc.ProcessingRequest_Reques
 			ctx.ResponseAPICtx = &ResponseAPIContext{IsResponseAPIRequest: true}
 			logging.Infof("Detected Response API POST request: %s", path)
 		}
+	}
+
+	// Detect /v1/completions requests (text completions)
+	if method == "POST" && path == "/v1/completions" {
+		ctx.CompletionsAPICtx = &CompletionsAPIContext{IsCompletionsRequest: true}
+		logging.Infof("Detected /v1/completions POST request: %s", path)
 	}
 
 	// Prepare base response
